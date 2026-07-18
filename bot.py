@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# UptimeRobot Bot - Full Registration + OTP (2026)
-import requests, time, os, threading, logging
+# UptimeRobot Bot - Full Debug + All Selectors (2026)
+import requests, time, os, threading, logging, json
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -45,17 +45,28 @@ def create_driver():
     options.add_argument('--disable-gpu')
     options.add_argument('--window-size=1280,720')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+    options.add_argument('--disable-logging')
     
-    try:
-        service = Service('/usr/bin/chromedriver')
-        return webdriver.Chrome(service=service, options=options)
-    except:
+    # Try different chromedriver paths
+    paths = [
+        '/usr/bin/chromedriver',
+        '/usr/local/bin/chromedriver',
+        '/usr/lib/chromium/chromedriver',
+        '/snap/bin/chromedriver',
+        'chromedriver'
+    ]
+    
+    for path in paths:
         try:
-            service = Service('chromedriver')
-            return webdriver.Chrome(service=service, options=options)
-        except Exception as e:
-            logger.error(f"Driver error: {e}")
-            return None
+            service = Service(path)
+            driver = webdriver.Chrome(service=service, options=options)
+            logger.info(f"✅ Driver created with: {path}")
+            return driver
+        except:
+            continue
+    
+    logger.error("❌ No chromedriver found")
+    return None
 
 # ===== SIGNUP + OTP =====
 def signup_and_otp(email, password):
@@ -71,43 +82,136 @@ def signup_and_otp(email, password):
         # === STEP 1: Signup Page ===
         logger.info("📡 Navigating to signup...")
         driver.get('https://dashboard.uptimerobot.com/sign-up')
-        time.sleep(3)
-        wait = WebDriverWait(driver, 20)
+        time.sleep(5)  # ज्यादा wait
+        logger.info(f"📍 Current URL: {driver.current_url}")
         
-        # === STEP 2: Email ===
-        logger.info("📧 Filling email...")
-        email_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="email"]')))
+        # === SAVE PAGE SOURCE ===
+        with open("page_source.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        logger.info("📄 Page source saved to page_source.html")
+        
+        wait = WebDriverWait(driver, 30)  # ज्यादा wait
+        
+        # === STEP 2: Email - Multiple Selectors ===
+        logger.info("📧 Looking for email input...")
+        email_selectors = [
+            (By.CSS_SELECTOR, 'input[type="email"]'),
+            (By.CSS_SELECTOR, 'input[name="email"]'),
+            (By.XPATH, '//input[@type="email"]'),
+            (By.XPATH, '//input[@name="email"]'),
+            (By.ID, 'email'),
+            (By.ID, 'email-input')
+        ]
+        
+        email_input = None
+        for by, selector in email_selectors:
+            try:
+                email_input = wait.until(EC.presence_of_element_located((by, selector)))
+                logger.info(f"✅ Email input found with: {by} - {selector}")
+                break
+            except Exception as e:
+                logger.warning(f"❌ Failed with {by}: {selector} - {str(e)[:50]}")
+                continue
+        
+        if not email_input:
+            return {'error': 'Email input not found'}
+        
         email_input.clear()
         email_input.send_keys(email)
         logger.info("✅ Email filled")
+        time.sleep(1)
         
-        # === STEP 3: Password ===
-        logger.info("🔑 Filling password...")
-        try:
-            password_input = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+        # === STEP 3: Password - Multiple Selectors ===
+        logger.info("🔑 Looking for password input...")
+        password_selectors = [
+            (By.CSS_SELECTOR, 'input[type="password"]'),
+            (By.CSS_SELECTOR, 'input[name="password"]'),
+            (By.XPATH, '//input[@type="password"]'),
+            (By.XPATH, '//input[@name="password"]'),
+            (By.ID, 'password'),
+            (By.ID, 'password-input')
+        ]
+        
+        password_input = None
+        for by, selector in password_selectors:
+            try:
+                password_input = driver.find_element(by, selector)
+                logger.info(f"✅ Password input found with: {by} - {selector}")
+                break
+            except Exception as e:
+                logger.warning(f"❌ Failed with {by}: {selector} - {str(e)[:50]}")
+                continue
+        
+        if password_input:
             password_input.clear()
             password_input.send_keys(password)
             logger.info("✅ Password filled")
-        except:
-            logger.warning("⚠️ Password field not found - continuing")
+        else:
+            logger.warning("⚠️ Password field not found - continuing (might be 2-step flow)")
         
-        # === STEP 4: Submit ===
+        # === STEP 4: Submit - Multiple Selectors ===
+        logger.info("🖱️ Looking for submit button...")
+        submit_selectors = [
+            (By.CSS_SELECTOR, 'button[type="submit"]'),
+            (By.CSS_SELECTOR, 'button[type="submit"]'),
+            (By.XPATH, '//button[contains(text(), "Register")]'),
+            (By.XPATH, '//button[contains(text(), "Sign up")]'),
+            (By.XPATH, '//button[contains(text(), "Create")]'),
+            (By.XPATH, '//button[contains(text(), "Continue")]'),
+            (By.CSS_SELECTOR, 'button.btn-primary'),
+            (By.CSS_SELECTOR, 'button.btn')
+        ]
+        
+        submit_btn = None
+        for by, selector in submit_selectors:
+            try:
+                submit_btn = wait.until(EC.element_to_be_clickable((by, selector)))
+                logger.info(f"✅ Submit button found with: {by} - {selector}")
+                break
+            except Exception as e:
+                logger.warning(f"❌ Failed with {by}: {selector} - {str(e)[:50]}")
+                continue
+        
+        if not submit_btn:
+            return {'error': 'Submit button not found'}
+        
         logger.info("🖱️ Clicking submit...")
-        submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[type="submit"]')))
         submit_btn.click()
-        logger.info("✅ Submit clicked")
         time.sleep(5)
+        logger.info(f"📍 After submit URL: {driver.current_url}")
         
-        # === STEP 5: Check if OTP appeared ===
+        # === STEP 5: Check for OTP ===
         logger.info("🔍 Checking for OTP...")
-        try:
-            # OTP input ढूंढो
-            otp_input = WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"], input[name="otp"]'))
-            )
-            logger.info("✅ OTP input found!")
-            
-            # Cookies save
+        time.sleep(3)
+        
+        # Save page after submit
+        with open("page_after_submit.html", "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+        logger.info("📄 Page after submit saved")
+        
+        # Check for OTP input
+        otp_selectors = [
+            (By.CSS_SELECTOR, 'input[type="text"]'),
+            (By.CSS_SELECTOR, 'input[name="otp"]'),
+            (By.CSS_SELECTOR, 'input[placeholder*="OTP"]'),
+            (By.XPATH, '//input[@name="otp"]'),
+            (By.XPATH, '//input[@placeholder*="OTP"]'),
+            (By.ID, 'otp'),
+            (By.ID, 'otp-input')
+        ]
+        
+        otp_found = False
+        for by, selector in otp_selectors:
+            try:
+                otp_input = driver.find_element(by, selector)
+                logger.info(f"✅ OTP input found with: {by} - {selector}")
+                otp_found = True
+                break
+            except:
+                continue
+        
+        if otp_found or 'otp' in driver.page_source.lower() or 'verification' in driver.page_source.lower():
+            logger.info("✅ OTP detected!")
             cookies = driver.get_cookies()
             return {
                 'cookies': cookies,
@@ -116,23 +220,21 @@ def signup_and_otp(email, password):
                 'step': 'otp_required',
                 'driver': driver
             }
-        except:
-            # अगर OTP input न मिले, तो पेज सोर्स चेक करो
-            page_text = driver.page_source.lower()
-            if 'otp' in page_text or 'verification' in page_text:
-                logger.info("✅ OTP detected in page source")
+        else:
+            # Check if already on dashboard
+            if 'dashboard' in driver.current_url:
+                logger.info("✅ Already on dashboard - account created without OTP?")
                 cookies = driver.get_cookies()
                 return {
                     'cookies': cookies,
                     'email': email,
                     'password': password,
-                    'step': 'otp_required',
+                    'step': 'complete',
                     'driver': driver
                 }
             else:
-                # अगर कुछ और हो
-                logger.error("❌ OTP not found!")
-                return {'error': 'OTP page not loaded'}
+                logger.error("❌ OTP not found and not on dashboard")
+                return {'error': f'OTP not found. Current URL: {driver.current_url}'}
                 
     except Exception as e:
         logger.error(f"❌ Signup error: {e}")
@@ -147,29 +249,68 @@ def verify_otp(otp):
         return False
     
     try:
-        wait = WebDriverWait(driver, 15)
+        wait = WebDriverWait(driver, 20)
         
-        # === STEP 1: OTP Input ===
-        logger.info("🔍 Finding OTP input...")
-        otp_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"], input[name="otp"]')))
+        # === OTP Input ===
+        otp_selectors = [
+            (By.CSS_SELECTOR, 'input[type="text"]'),
+            (By.CSS_SELECTOR, 'input[name="otp"]'),
+            (By.CSS_SELECTOR, 'input[placeholder*="OTP"]'),
+            (By.XPATH, '//input[@name="otp"]'),
+            (By.XPATH, '//input[@placeholder*="OTP"]'),
+            (By.ID, 'otp'),
+            (By.ID, 'otp-input')
+        ]
+        
+        otp_input = None
+        for by, selector in otp_selectors:
+            try:
+                otp_input = wait.until(EC.presence_of_element_located((by, selector)))
+                logger.info(f"✅ OTP input found: {by} - {selector}")
+                break
+            except:
+                continue
+        
+        if not otp_input:
+            logger.error("❌ OTP input not found")
+            return False
+        
         otp_input.clear()
         otp_input.send_keys(otp)
         logger.info("✅ OTP entered")
         
-        # === STEP 2: Submit OTP ===
-        logger.info("🖱️ Clicking verify...")
-        submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[type="submit"]')))
+        # === Submit OTP ===
+        submit_selectors = [
+            (By.CSS_SELECTOR, 'button[type="submit"]'),
+            (By.XPATH, '//button[contains(text(), "Verify")]'),
+            (By.XPATH, '//button[contains(text(), "Confirm")]'),
+            (By.CSS_SELECTOR, 'button.btn-primary')
+        ]
+        
+        submit_btn = None
+        for by, selector in submit_selectors:
+            try:
+                submit_btn = wait.until(EC.element_to_be_clickable((by, selector)))
+                logger.info(f"✅ Submit button found: {by} - {selector}")
+                break
+            except:
+                continue
+        
+        if not submit_btn:
+            logger.error("❌ Submit button not found")
+            return False
+        
         submit_btn.click()
         time.sleep(5)
         
-        # === STEP 3: Check Success ===
+        # === Check Success ===
         if 'dashboard' in driver.current_url:
-            logger.info("✅ OTP verified - Dashboard reached!")
+            logger.info("✅ OTP verified - Dashboard!")
             return True
         else:
-            # Error check
+            # Check for error
             try:
-                error_elem = driver.find_element(By.CSS_SELECTOR, '.error, .alert-danger')
+                error_elem = driver.find_element(By.CSS_SELECTOR, '.error, .alert-danger, .text-danger')
                 logger.error(f"❌ OTP error: {error_elem.text}")
                 return False
             except:
@@ -210,10 +351,10 @@ def bot_loop():
                 
                 if text.startswith('/start'):
                     send_telegram(chat_id, 
-                        "🔓 *UptimeRobot Bot - Full Registration*\n"
+                        "🔓 *UptimeRobot Bot v6 - All Selectors*\n"
                         "📌 `/signup email password`\n"
                         "📌 `/verify OTP`\n\n"
-                        "बोट खुद registration करेगा और OTP माँगेगा!"
+                        "✅ Full debug + all selectors enabled!"
                     )
                 
                 elif text.startswith('/signup'):
@@ -222,18 +363,27 @@ def bot_loop():
                         send_telegram(chat_id, "❌ /signup email password")
                         continue
                     email, password = parts[1], parts[2]
-                    send_telegram(chat_id, f"⏳ Registration हो रही है {email}...\n(इसमें 1-2 मिनट लग सकते हैं)")
+                    send_telegram(chat_id, f"⏳ Registration हो रही है {email}...\n(2-3 मिनट लग सकते हैं)")
                     
                     result = signup_and_otp(email, password)
                     
                     if result and 'cookies' in result:
                         user_sessions[chat_id] = result
-                        send_telegram(chat_id, 
-                            f"✅ *Registration सफल!*\n📧 {email}\n\n🔑 OTP आ गया? `/verify 123456` करो"
-                        )
+                        if result.get('step') == 'otp_required':
+                            send_telegram(chat_id, 
+                                f"✅ *Registration सफल!*\n📧 {email}\n\n🔑 OTP आ गया? `/verify 123456` करो"
+                            )
+                        else:
+                            send_telegram(chat_id, 
+                                f"✅ *अकाउंट एक्टिव!*\n📧 {email}\n🔑 {password}"
+                            )
+                            send_telegram(CHAT_ID, f"🎯 {email}:{password}")
+                            with open("accounts.txt", "a") as f:
+                                f.write(f"{email}:{password}\n")
+                            del user_sessions[chat_id]
                     else:
                         error = result.get('error', 'Unknown error') if result else 'No result'
-                        send_telegram(chat_id, f"❌ *फेल!*\n{error}")
+                        send_telegram(chat_id, f"❌ *फेल!*\n{error}\n\n📄 Railway Logs में `page_source.html` देखो")
                 
                 elif text.startswith('/verify'):
                     parts = text.split()
@@ -266,7 +416,7 @@ def bot_loop():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    logger.info("🚀 Starting UptimeRobot Bot Full Registration...")
+    logger.info("🚀 Starting UptimeRobot Bot v6 - All Selectors...")
     
     bot_thread = threading.Thread(target=bot_loop, daemon=True)
     bot_thread.start()
