@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# UptimeRobot Bot - OTP Mode Fixed (2026)
-import requests, time, os, subprocess, threading, logging
+# UptimeRobot Bot - Full Registration + OTP (2026)
+import requests, time, os, threading, logging
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -37,29 +37,7 @@ def send_telegram(chat_id, text):
         logger.error(f"Send error: {e}")
 
 # ===== CHROMEDRIVER =====
-def find_chromedriver():
-    possible_paths = [
-        '/usr/bin/chromedriver',
-        '/usr/local/bin/chromedriver',
-        '/usr/lib/chromium/chromedriver',
-        '/snap/bin/chromedriver',
-    ]
-    for path in possible_paths:
-        if os.path.exists(path):
-            return path
-    try:
-        result = subprocess.run(['which', 'chromedriver'], capture_output=True, text=True)
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except:
-        pass
-    return None
-
 def create_driver():
-    chromedriver_path = find_chromedriver()
-    if not chromedriver_path:
-        return None
-    
     options = Options()
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
@@ -68,17 +46,21 @@ def create_driver():
     options.add_argument('--window-size=1280,720')
     options.add_argument('--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
     
-    service = Service(chromedriver_path)
     try:
+        service = Service('/usr/bin/chromedriver')
         return webdriver.Chrome(service=service, options=options)
-    except Exception as e:
-        logger.error(f"Driver error: {e}")
-        return None
+    except:
+        try:
+            service = Service('chromedriver')
+            return webdriver.Chrome(service=service, options=options)
+        except Exception as e:
+            logger.error(f"Driver error: {e}")
+            return None
 
-# ===== SIGNUP (OTP REQUIRED) =====
-def signup_uptime(email, password):
+# ===== SIGNUP + OTP =====
+def signup_and_otp(email, password):
     global driver
-    logger.info(f"🔐 Signup started for: {email}")
+    logger.info(f"🔐 Starting full signup for: {email}")
     
     if not driver:
         driver = create_driver()
@@ -86,18 +68,21 @@ def signup_uptime(email, password):
             return {'error': 'ChromeDriver not found'}
     
     try:
+        # === STEP 1: Signup Page ===
+        logger.info("📡 Navigating to signup...")
         driver.get('https://dashboard.uptimerobot.com/sign-up')
         time.sleep(3)
-        
         wait = WebDriverWait(driver, 20)
         
-        # === EMAIL ===
+        # === STEP 2: Email ===
+        logger.info("📧 Filling email...")
         email_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="email"]')))
         email_input.clear()
         email_input.send_keys(email)
         logger.info("✅ Email filled")
         
-        # === PASSWORD ===
+        # === STEP 3: Password ===
+        logger.info("🔑 Filling password...")
         try:
             password_input = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
             password_input.clear()
@@ -106,19 +91,21 @@ def signup_uptime(email, password):
         except:
             logger.warning("⚠️ Password field not found - continuing")
         
-        # === SUBMIT ===
+        # === STEP 4: Submit ===
+        logger.info("🖱️ Clicking submit...")
         submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[type="submit"]')))
         submit_btn.click()
         logger.info("✅ Submit clicked")
         time.sleep(5)
         
-        # === CHECK FOR OTP ===
-        # OTP पेज पर OTP input दिखना चाहिए
+        # === STEP 5: Check if OTP appeared ===
+        logger.info("🔍 Checking for OTP...")
         try:
-            otp_input = WebDriverWait(driver, 10).until(
+            # OTP input ढूंढो
+            otp_input = WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"], input[name="otp"]'))
             )
-            logger.info("✅ OTP input found - OTP required!")
+            logger.info("✅ OTP input found!")
             
             # Cookies save
             cookies = driver.get_cookies()
@@ -126,10 +113,11 @@ def signup_uptime(email, password):
                 'cookies': cookies,
                 'email': email,
                 'password': password,
-                'step': 'otp_required'
+                'step': 'otp_required',
+                'driver': driver
             }
         except:
-            # अगर OTP input न मिले, तो मैन्युअल डिटेक्शन
+            # अगर OTP input न मिले, तो पेज सोर्स चेक करो
             page_text = driver.page_source.lower()
             if 'otp' in page_text or 'verification' in page_text:
                 logger.info("✅ OTP detected in page source")
@@ -138,47 +126,43 @@ def signup_uptime(email, password):
                     'cookies': cookies,
                     'email': email,
                     'password': password,
-                    'step': 'otp_required'
+                    'step': 'otp_required',
+                    'driver': driver
                 }
             else:
-                # अगर सीधे डैशबोर्ड पर चला गया (शायद ही कभी)
-                logger.warning("⚠️ No OTP detected, but proceeding")
-                cookies = driver.get_cookies()
-                return {
-                    'cookies': cookies,
-                    'email': email,
-                    'password': password,
-                    'step': 'otp_required'  # मजबूरन OTP मोड
-                }
+                # अगर कुछ और हो
+                logger.error("❌ OTP not found!")
+                return {'error': 'OTP page not loaded'}
                 
     except Exception as e:
         logger.error(f"❌ Signup error: {e}")
         return {'error': str(e)}
 
 # ===== VERIFY OTP =====
-def verify_otp(session_data, otp):
+def verify_otp(otp):
     global driver
     logger.info(f"🔐 Verifying OTP: {otp}")
     
     if not driver:
-        driver = create_driver()
-        if not driver:
-            return False
+        return False
     
     try:
-        # OTP input ढूंढो और भरो
         wait = WebDriverWait(driver, 15)
+        
+        # === STEP 1: OTP Input ===
+        logger.info("🔍 Finding OTP input...")
         otp_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"], input[name="otp"]')))
         otp_input.clear()
         otp_input.send_keys(otp)
         logger.info("✅ OTP entered")
         
-        # Submit करो
+        # === STEP 2: Submit OTP ===
+        logger.info("🖱️ Clicking verify...")
         submit_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[type="submit"]')))
         submit_btn.click()
         time.sleep(5)
         
-        # चेक करो कि डैशबोर्ड पर आ गए या नहीं
+        # === STEP 3: Check Success ===
         if 'dashboard' in driver.current_url:
             logger.info("✅ OTP verified - Dashboard reached!")
             return True
@@ -226,9 +210,10 @@ def bot_loop():
                 
                 if text.startswith('/start'):
                     send_telegram(chat_id, 
-                        "🔓 *UptimeRobot Bot OTP Mode*\n"
+                        "🔓 *UptimeRobot Bot - Full Registration*\n"
                         "📌 `/signup email password`\n"
-                        "📌 `/verify OTP`"
+                        "📌 `/verify OTP`\n\n"
+                        "बोट खुद registration करेगा और OTP माँगेगा!"
                     )
                 
                 elif text.startswith('/signup'):
@@ -237,14 +222,14 @@ def bot_loop():
                         send_telegram(chat_id, "❌ /signup email password")
                         continue
                     email, password = parts[1], parts[2]
-                    send_telegram(chat_id, f"⏳ साइनअप हो रहा है {email}...")
+                    send_telegram(chat_id, f"⏳ Registration हो रही है {email}...\n(इसमें 1-2 मिनट लग सकते हैं)")
                     
-                    result = signup_uptime(email, password)
+                    result = signup_and_otp(email, password)
                     
                     if result and 'cookies' in result:
                         user_sessions[chat_id] = result
                         send_telegram(chat_id, 
-                            f"✅ *साइनअप सफल!*\n📧 {email}\n\n🔑 OTP आ गया? `/verify 123456` करो"
+                            f"✅ *Registration सफल!*\n📧 {email}\n\n🔑 OTP आ गया? `/verify 123456` करो"
                         )
                     else:
                         error = result.get('error', 'Unknown error') if result else 'No result'
@@ -263,7 +248,7 @@ def bot_loop():
                     data = user_sessions[chat_id]
                     send_telegram(chat_id, "⏳ OTP वेरिफाई हो रहा है...")
                     
-                    if verify_otp(data, otp):
+                    if verify_otp(otp):
                         send_telegram(chat_id, 
                             f"✅ *अकाउंट एक्टिव!*\n📧 {data['email']}\n🔑 {data['password']}"
                         )
@@ -281,7 +266,7 @@ def bot_loop():
 
 # ===== MAIN =====
 if __name__ == "__main__":
-    logger.info("🚀 Starting UptimeRobot Bot OTP Mode...")
+    logger.info("🚀 Starting UptimeRobot Bot Full Registration...")
     
     bot_thread = threading.Thread(target=bot_loop, daemon=True)
     bot_thread.start()
